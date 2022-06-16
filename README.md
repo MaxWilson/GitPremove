@@ -4,7 +4,7 @@ Make git conflict resolution easier and history cleaner, by using this tool to d
 Usage: use git worktree to check out two versions of a repo at the same time in different repos. Let's say you've got the following repo with conflicts:
 
 mkdir c:\code\repro\rebaseIssue
-cd c:\code\repro\rebaseIssue
+pushd c:\code\repro\rebaseIssue
 git init
 echo "line 1" > a.txt
 echo "dog" > b.txt
@@ -15,9 +15,8 @@ mkdir src
 git mv a.txt src\a1.txt
 git commit -m "Move a1"
 git mv b.txt src\b1.txt
-git commit -m "Move b1"
 echo horse > src\b1.txt
-git commit -am "Change dog to horse"
+git commit -am "Move b1, Change dog to horse"
 git checkout master
 git checkout -b branch2
 echo pigeon > b.txt
@@ -41,4 +40,4 @@ git add .
 git commit
 
 At this point I was expecting git to be confused and not realize that b had been renamed instead of deleted + added, but... currently git is picking it up
-correctly. 
+correctly. Maybe it only happens with big commits?
