@@ -5,7 +5,10 @@ let ignoreFileEntry (fileOrDirectoryName:string) =
     match (Path.GetFileName fileOrDirectoryName).ToLowerInvariant() with
     | "bin" | "obj" | "node_modules" | "download" -> true
     | x when x.StartsWith "." || x.EndsWith "dll" || x.EndsWith "exe" || x.EndsWith "map" || x.Contains ("sample") -> true
+    | ("app" | "web") when fileOrDirectoryName.Contains @"\POS\" -> true
+    | x when x.EndsWith "resources.resjson" && not (x.EndsWith @"strings\en-us\resources.resjson") -> true
     | _ -> false
+
 let rec getFilesRecursively (rootDirectoryPath: string) =
     if ignoreFileEntry rootDirectoryPath || not (Directory.Exists rootDirectoryPath) then []
     else [
@@ -32,20 +35,17 @@ let shellExecute cmd args workingDirectory =
     else
         failwith $"Couldn't execute {cmd} {args} in {workingDirectory}"
 
-let gitDirectory = @"c:\mse\MSE.D365.FnO\"
-let destBranch = "users/maxw/newExtensionModel"
-let destSubdirectory = "CommerceSDK"
-let destDirectory = Path.Combine(gitDirectory, destSubdirectory)
-let srcBranch = "origin/main"
-let srcSubdirectories = ["RetailSDK\POS";"RetailSDK\RetailServer";"RetailSDK\Database"]
-let srcDirectories = srcSubdirectories |> List.map (fun src -> Path.Combine(gitDirectory, src))
-shellExecute @"git" $"checkout {destBranch}" gitDirectory
-let destTemplate = getFilesRecursively destDirectory // this is where we want all our files to end up
-// now do a git checkout of the original code
-shellExecute @"git" $"checkout {srcBranch}" gitDirectory
-let srcFiles = srcDirectories |> List.map getFilesRecursively |> List.concat // this is where we want all our files to end up
-
 type Origin = Unique of string | Ambiguous of string list | New
+
+let getMatchLength (lhs: _ array) (rhs: _ array) =
+    let rec loop ix =
+        if ix >= lhs.Length || ix >= rhs.Length || lhs[ix] <> rhs[ix] then ix
+        else ix + 1 |> loop
+    loop 0
+
+let specificity (src:string) (dest:string) =
+    getMatchLength (src.ToCharArray() |> Array.rev) (dest.ToCharArray() |> Array.rev)
+
 let compare src dest =
     let srcByName =
         let getFileName (file:string) = Path.GetFileName file
@@ -57,16 +57,45 @@ let compare src dest =
             match srcByName |> Map.tryFind fileName with
             | None -> New
             | Some [x] -> Unique x
-            | Some xs -> Ambiguous xs
+            | Some xs ->
+                match xs |> List.groupBy (specificity destFile) with
+                | (specificity, [x])::_ -> Unique x
+                | (specificity, xs)::_ -> Ambiguous xs
+                | _ -> Ambiguous xs
         destFile, origin
         ]
 
+let gitDirectory = @"c:\mse\MSE.D365.FnO\"
+let destBranch = "users/maxw/newExtensionModel"
+let destSubdirectory = "CommerceSDK"
+let destDirectory = Path.Combine(gitDirectory, destSubdirectory)
+let srcBranch = "dev/commerceSDK/premerge"
+let srcSubdirectories = ["RetailSDK\POS";"RetailSDK\RetailServer";"RetailSDK\Database"]
+let srcDirectories = srcSubdirectories |> List.map (fun src -> Path.Combine(gitDirectory, src))
+shellExecute @"git" $"checkout {destBranch}" gitDirectory
+let destTemplate = getFilesRecursively destDirectory // this is where we want all our files to end up
+// now do a git checkout of the original code
+shellExecute @"git" $"checkout {srcBranch}" gitDirectory
+let srcFiles = srcDirectories |> List.map getFilesRecursively |> List.concat // this is where we want all our files to end up
 let diff = compare srcFiles destTemplate
+let mutable count = 0
 for line in diff do
     match line with
-    | file, Ambiguous srcs ->
-        printfn $"{file} {srcs.Length}"
-        //for src in srcs do
-        //    printfn $"    {src}"
+    | dest, Unique src ->
+        let gitExecute cmd =
+            match shellExecute @"git" cmd gitDirectory with
+            | 0, _, _ -> ()
+            | errNo, out, err ->
+                failwith $"git {cmd}: {errNo}\n{out}\n{err}"
+        gitExecute $"mv {src} {dest}"
+        count <- count + 1
+        if count % 30 = 0 then
+            gitExecute $"""commit -m "Pre-move #{count/30}" -m "Pre-move some files to preserve git history" """
     | _ -> ()
-diff |> List.filter (function (_, Ambiguous _) -> true | _ -> false)
+for line in diff do
+    match line with
+    | file, Ambiguous srcs when file.EndsWith "js" = false ->
+        printfn $"{file} {srcs.Length}"
+        for src in srcs do
+            printfn $"    {src}"
+    | _ -> ()
