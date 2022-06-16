@@ -82,12 +82,15 @@ let mutable count = 0
 for line in diff do
     match line with
     | dest, Unique src ->
+        let destDir = Path.GetDirectoryName dest
+        if Directory.Exists destDir |> not then
+            Directory.CreateDirectory destDir |> ignore
         let gitExecute cmd =
             match shellExecute @"git" cmd gitDirectory with
             | 0, _, _ -> ()
             | errNo, out, err ->
                 failwith $"git {cmd}: {errNo}\n{out}\n{err}"
-        gitExecute $"mv {src} {dest}"
+        gitExecute $"""mv "{src}" "{dest}" """
         count <- count + 1
         if count % 30 = 0 then
             gitExecute $"""commit -m "Pre-move #{count/30}" -m "Pre-move some files to preserve git history" """
