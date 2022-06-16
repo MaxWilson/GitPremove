@@ -3,8 +3,8 @@ open System.IO
 
 let ignoreFileEntry (fileOrDirectoryName:string) =
     match (Path.GetFileName fileOrDirectoryName).ToLowerInvariant() with
-    | "bin" | "obj" -> true
-    | x when x.StartsWith "." || x.EndsWith "dll" || x.EndsWith "exe" -> true
+    | "bin" | "obj" | "node_modules" | "download" -> true
+    | x when x.StartsWith "." || x.EndsWith "dll" || x.EndsWith "exe" || x.EndsWith "map" || x.Contains ("sample") -> true
     | _ -> false
 let rec getFilesRecursively (rootDirectoryPath: string) =
     if ignoreFileEntry rootDirectoryPath || not (Directory.Exists rootDirectoryPath) then []
@@ -26,11 +26,47 @@ let shellExecute cmd args workingDirectory =
         let out = System.Threading.Tasks.Task.Run(fun () -> proc.StandardOutput.ReadToEnd())
         System.Threading.Tasks.Task.WaitAll(err, out)
         proc.WaitForExit()
-        proc.ExitCode, out.Result, err.Result
+        let retval = proc.ExitCode, out.Result, err.Result
+        proc.Close()
+        retval
     else
         failwith $"Couldn't execute {cmd} {args} in {workingDirectory}"
 
-shellExecute @"git" "status RetailSDK\RetailServer\MSE.D365.RetailServer.Extensions\MSE.D365.RetailServer.Extensions\SalesOrderController.cs" @"c:\mse\MSE.D365.FnO\"
-
-let finalTemplate = getFilesRecursively "c:\mse\MSE.D365.FnO\CommerceSDK" // this is where we want all our files to end up
+let gitDirectory = @"c:\mse\MSE.D365.FnO\"
+let destBranch = "users/maxw/newExtensionModel"
+let destSubdirectory = "CommerceSDK"
+let destDirectory = Path.Combine(gitDirectory, destSubdirectory)
+let srcBranch = "origin/main"
+let srcSubdirectories = ["RetailSDK\POS";"RetailSDK\RetailServer";"RetailSDK\Database"]
+let srcDirectories = srcSubdirectories |> List.map (fun src -> Path.Combine(gitDirectory, src))
+shellExecute @"git" $"checkout {destBranch}" gitDirectory
+let destTemplate = getFilesRecursively destDirectory // this is where we want all our files to end up
 // now do a git checkout of the original code
+shellExecute @"git" $"checkout {srcBranch}" gitDirectory
+let srcFiles = srcDirectories |> List.map getFilesRecursively |> List.concat // this is where we want all our files to end up
+
+type Origin = Unique of string | Ambiguous of string list | New
+let compare src dest =
+    let srcByName =
+        let getFileName (file:string) = Path.GetFileName file
+        src |> List.groupBy getFileName |> Map.ofList
+    // try to find a unique src for every dest
+    [for (destFile:string) in dest do
+        let fileName = Path.GetFileName destFile
+        let origin =
+            match srcByName |> Map.tryFind fileName with
+            | None -> New
+            | Some [x] -> Unique x
+            | Some xs -> Ambiguous xs
+        destFile, origin
+        ]
+
+let diff = compare srcFiles destTemplate
+for line in diff do
+    match line with
+    | file, Ambiguous srcs ->
+        printfn $"{file} {srcs.Length}"
+        //for src in srcs do
+        //    printfn $"    {src}"
+    | _ -> ()
+diff |> List.filter (function (_, Ambiguous _) -> true | _ -> false)
