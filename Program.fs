@@ -58,7 +58,7 @@ let compare src dest =
             | None -> New
             | Some [x] -> Unique x
             | Some xs ->
-                match xs |> List.groupBy (specificity destFile) with
+                match xs |> List.groupBy (specificity destFile) |> List.sortByDescending fst with
                 | (specificity, [x])::_ -> Unique x
                 | (specificity, xs)::_ -> Ambiguous xs
                 | _ -> Ambiguous xs
